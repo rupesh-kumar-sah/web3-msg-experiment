@@ -4,6 +4,7 @@ import {
   verifyMessage,
   serializeMessage,
   deserializeMessage,
+  verifyQuorum,
 } from '../src/core/signing';
 
 describe('Stellar message signing', () => {
@@ -90,5 +91,71 @@ describe('MessagingNode signing integration', () => {
     const decoded = deserializeMessage(plainText);
     // Plain text is not a JSON SignedMessage, so deserialization returns null
     expect(decoded).toBeNull();
+  });
+});
+
+describe('verifyQuorum', () => {
+  const payload = 'relay-payload';
+  let kp1: Keypair, kp2: Keypair, kp3: Keypair;
+
+  beforeEach(() => {
+    kp1 = Keypair.random();
+    kp2 = Keypair.random();
+    kp3 = Keypair.random();
+  });
+
+  function sig(kp: Keypair): { publicKey: string; signature: string } {
+    const bytes = Buffer.from(payload, 'utf8');
+    return {
+      publicKey: kp.publicKey(),
+      signature: Buffer.from(kp.sign(bytes)).toString('hex'),
+    };
+  }
+
+  it('passes when valid signatures meet the threshold', () => {
+    const quorum = [kp1.publicKey(), kp2.publicKey(), kp3.publicKey()];
+    expect(verifyQuorum(payload, [sig(kp1), sig(kp2)], quorum, 2)).toBe(true);
+  });
+
+  it('passes when all quorum members sign (threshold === quorum size)', () => {
+    const quorum = [kp1.publicKey(), kp2.publicKey()];
+    expect(verifyQuorum(payload, [sig(kp1), sig(kp2)], quorum, 2)).toBe(true);
+  });
+
+  it('fails when fewer valid signatures than threshold', () => {
+    const quorum = [kp1.publicKey(), kp2.publicKey(), kp3.publicKey()];
+    expect(verifyQuorum(payload, [sig(kp1)], quorum, 2)).toBe(false);
+  });
+
+  it('ignores signatures from keys not in the quorum', () => {
+    const outsider = Keypair.random();
+    const quorum = [kp1.publicKey(), kp2.publicKey()];
+    // outsider signs but is not in quorum; only kp1 counts → below threshold 2
+    expect(verifyQuorum(payload, [sig(kp1), sig(outsider)], quorum, 2)).toBe(false);
+  });
+
+  it('deduplicates repeated signatures from the same key', () => {
+    const quorum = [kp1.publicKey(), kp2.publicKey()];
+    expect(verifyQuorum(payload, [sig(kp1), sig(kp1)], quorum, 2)).toBe(false);
+  });
+
+  it('rejects a tampered signature from a quorum member', () => {
+    const quorum = [kp1.publicKey(), kp2.publicKey()];
+    const bad = { publicKey: kp1.publicKey(), signature: 'deadbeef'.repeat(8) };
+    expect(verifyQuorum(payload, [bad, sig(kp2)], quorum, 2)).toBe(false);
+  });
+
+  it('returns false for empty signature list', () => {
+    const quorum = [kp1.publicKey()];
+    expect(verifyQuorum(payload, [], quorum, 1)).toBe(false);
+  });
+
+  it('returns false for zero threshold', () => {
+    const quorum = [kp1.publicKey()];
+    expect(verifyQuorum(payload, [sig(kp1)], quorum, 0)).toBe(false);
+  });
+
+  it('returns false for empty quorum set', () => {
+    expect(verifyQuorum(payload, [sig(kp1)], [], 1)).toBe(false);
   });
 });
