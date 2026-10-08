@@ -1,2 +1,4 @@
 ﻿node_modules/
 dist/
+config.bat
+node_modules
